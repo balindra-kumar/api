@@ -1,0 +1,245 @@
+const express = require('express');
+const { graphqlHTTP } = require('express-graphql');
+const { buildSchema } = require('graphql');
+const jwt = require('jsonwebtoken');
+const cors = require('cors');
+const mysql = require('mysql');
+require('dotenv').config();
+
+//Secret key for signing the JWT token
+
+const JWT_SECRET_KEY = '5u8vHk$#q2W*PzRt9@3!sM'
+
+const app = express();
+
+app.use(cors())
+
+//create mysql connection
+// const connection = mysql.createConnection({
+//   host: "graphql-container",
+//   user: "root",
+//   password: "",
+//   database: "nodejs",
+// })
+
+const connection = mysql.createConnection({
+  host: "localhost",
+  user: "root",
+  password: "",
+  database: "nodejs",
+})
+
+connection.connect((err) => {
+  if (err) {
+    console.log('connection is failed', err)
+  } else {
+    console.log('connection is successfully')
+  }
+})
+
+//define the schema
+const schema = buildSchema(`
+  type User{
+    id: ID,
+    name: String,
+    age: Int,
+    city: String,
+    user_email: String,
+    user_password: String,
+    token: String
+  }
+  type Query{
+    getUser(id:ID!): User, 
+    getUsers: [User],
+    
+  }
+  type Mutation {
+    deleteUser(id: ID!): User,
+    addUser(name: String, age: Int, city: String, user_email: String, user_password: String): User,
+    updateUser(id: ID!, name: String, age: Int, city: String, user_email: String, user_password: String): User,
+    loginUser(user_email:String!, user_password: String!): User,
+
+  }
+  
+`)
+
+
+
+
+
+//define the resolver
+// Resolver is a collection of functions that generate response for a GraphQL query. 
+
+const root = {
+  getUsers: (args, context,) => {
+
+    const token = context.token; // Access the token from the context
+    console.log('GetUsers Token:', token);
+
+    if (!token) {
+      return new Error('Authentication token is required to access this resource')
+    }
+
+    return new Promise((resolve, reject) => {
+      connection.query('SELECT * FROM student', (err, result) => {
+        if (err) {
+          reject(err)
+        } else {
+          resolve(result)
+        }
+      })
+    })
+  },
+  getUser: ({ id }) => {
+    return new Promise((resolve, rejected,) => {
+      connection.query('SELECT * FROM student WHERE id= ?', [id], (err, result) => {
+        if (err) {
+          rejected(err)
+        } else {
+          resolve(result[0])
+        }
+      })
+    })
+  },
+  loginUser: ({ user_email, user_password }) => {
+    // console.log('Current user:', context.user); // Access decoded token here
+    return new Promise((resolve, reject) => {
+      // Query the database to find the user based on email and password
+      connection.query(
+        "SELECT * FROM student WHERE user_email=? AND user_password=?",
+        [user_email, user_password],
+        (err, result) => {
+          if (err) {
+            // Log and reject if there's an error with the query
+            console.error("Error querying database:", err);
+            reject(err);
+            return;
+          } else {
+            // If there are no errors and result has data
+            if (result.length > 0) {
+              const user = result[0];
+              console.log("User found:", user);
+              // Generate JWT token
+              const token = jwt.sign(
+                { user_email: user.user_email, user_password: user.user_password },
+                JWT_SECRET_KEY,
+                { expiresIn: "1h" }
+              );
+              console.log("Token generated:", token);
+              // Resolve with user data and token
+              resolve({ ...user, token });
+            } else {
+              // If no user is found, resolve with null
+              console.log("User not found");
+              resolve(null);
+            }
+          }
+        }
+      );
+    });
+  },
+
+
+  addUser: ({ name, age, city, user_email, user_password }) => {
+    return new Promise((resolve, reject) => {
+      connection.query("INSERT INTO student (name, age, city, user_email, user_password) VALUE(?,?,?,?,?)",
+        [name, age, city, user_email, user_password], (err, result) => {
+          if (err) {
+            reject(err)
+          } else {
+            resolve(result)
+          }
+        })
+    })
+  },
+  updateUser: ({ id, name, age, city, user_email, user_password }) => {
+    return new Promise((resolve, reject) => {
+      connection.query("UPDATE student SET name=?, age=?, city=?, user_email=?, user_password=? WHERE id=?", [
+        name, age, city, user_email, user_password, id], (err, result) => {
+          if (err) {
+            reject(err)
+          } else {
+            resolve(result)
+          }
+        })
+    })
+  },
+  deleteUser: ({ id }) => {
+    return new Promise((resolve, rejected) => {
+      connection.query("DELETE FROM student where id=?", [id], (err, result) => {
+        if (err) {
+          rejected(err)
+        } else {
+          resolve(result)
+        }
+      })
+    })
+  },
+
+
+}
+
+
+// Middleware function to verify JWT token
+const verifyToken = (req, res, next) => {
+
+  // Check if the 'Authorization' header exists in the request
+  const authHeader = req.headers['authorization'];
+  if (!authHeader) {
+    return next();
+  }
+
+  // Check if the token is provided in the request headers
+  const token = req.headers['authorization'].split(' ')[1];;
+  console.log('tockent is middleware', token)
+
+
+
+  // If the token is not provided, redirect to login page
+  if(token){
+  jwt.verify(token, JWT_SECRET_KEY, (err, decoded) => {
+    if (err) {
+      console.error('Error verifying token:', err);
+      next()
+    }
+
+    // If the token is valid, attach the decoded token to the request object
+    req.decoded = decoded;
+     
+   
+    next();
+  });
+  }else{
+    next()
+  }
+
+}
+
+
+
+// Middleware to decode JWT token and attach it to req.decoded
+app.use('/graphql', verifyToken, (req, res, next) => {
+  // Assuming you've decoded the token and attached it to req.decoded before this middleware
+  const decodedToken = req.decoded;
+
+  // Attach the decoded token to the context object
+  req.context = { token: decodedToken };
+  next();
+});
+
+//graphql Endpoints
+app.use('/graphql', (req, res, next) => {
+  const decodedToken = req.decoded;
+  console.log("decone is ", decodedToken)
+  graphqlHTTP({
+    schema: schema, rootValue: root, graphiql: true,
+    context: { token: req.decoded } // Pass the decoded token to the context
+  })(req, res, next);
+})
+
+
+//start the server
+
+app.listen(process.env.PORT, () => {
+  console.log('Server is starting at port rsdkafj', process.env.PORT)
+})
