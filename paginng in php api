@@ -1,0 +1,150 @@
+<?php
+// Allow cross-origin requests
+header("Access-Control-Allow-Origin: *");
+header("Access-Control-Allow-Methods: GET, POST, PUT, DELETE, OPTIONS");
+header("Access-Control-Allow-Headers: Content-Type, Authorization");
+require 'db.php';
+
+header('Content-Type: application/json');
+
+// Get DataTable parameters
+$start = isset($_GET['start']) ? (int)$_GET['start'] : 0;
+$length = isset($_GET['length']) ? (int)$_GET['length'] : 10;
+$searchValue = isset($_GET['search']['value']) ? $_GET['search']['value'] : '';
+$startDate = isset($_GET['start_date']) ? $_GET['start_date'] : '';
+$endDate = isset($_GET['end_date']) ? $_GET['end_date'] : '';
+
+// Count total records
+$totalRecordsQuery = "SELECT COUNT(*) as total FROM records";
+$totalRecordsResult = mysqli_query($conn, $totalRecordsQuery);
+$totalRecords = mysqli_fetch_assoc($totalRecordsResult)['total'];
+
+// Build the search query
+$searchQuery = 'WHERE 1=1'; // Default condition to always include records
+if (!empty($searchValue)) {
+    $searchQuery .= " AND (name LIKE '%$searchValue%' OR position LIKE '%$searchValue%' OR office LIKE '%$searchValue%')";
+}
+if (!empty($startDate) && !empty($endDate)) {
+    $searchQuery .= " AND DATE(start_date) BETWEEN '$startDate' AND '$endDate'";
+}
+
+// Get filtered record count
+$filteredRecordsQuery = "SELECT COUNT(*) as total FROM records $searchQuery";
+$filteredRecordsResult = mysqli_query($conn, $filteredRecordsQuery);
+$filteredRecords = mysqli_fetch_assoc($filteredRecordsResult)['total'];
+
+// Fetch paginated records
+$query = "SELECT * FROM records $searchQuery ORDER BY id DESC LIMIT $start, $length";
+$result = mysqli_query($conn, $query);
+
+$records = [];
+while ($row = mysqli_fetch_assoc($result)) {
+    $records[] = [
+        'name' => $row['name'],
+        'position' => $row['position'],
+        'office' => $row['office'],
+        'age' => $row['age'],
+        'start_date' => $row['start_date'],
+        'salary' => '$' . number_format($row['salary'], 2),
+        'timestamp' => $row['create_at'],
+    ];
+}
+
+// Prepare the response
+$response = [
+    "draw" => isset($_GET['draw']) ? (int)$_GET['draw'] : 1,
+    "recordsTotal" => $totalRecords,
+    "recordsFiltered" => $filteredRecords,
+    "data" => $records,
+];
+
+echo json_encode($response);
+mysqli_close($conn);
+
+
+
+
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>DataTable Example</title>
+    <link
+      rel="stylesheet"
+      href="https://cdn.datatables.net/1.10.9/css/jquery.dataTables.min.css"
+    />
+  </head>
+  <body>
+    <label for="start_date">Start Date:</label>
+    <input type="date" id="start_date" />
+    <label for="end_date">End Date:</label>
+    <input type="date" id="end_date" />
+    
+    <table id="example" class="display">
+      <thead>
+        <tr>
+          <th>Name</th>
+          <th>Position</th>
+          <th>Office</th>
+          <th>Age</th>
+          <th>Start Date</th>
+          <th>Salary</th>
+          <th>Timestamp</th> <!-- Treated as date for sorting -->
+        </tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+
+    <script
+      src="https://cdnjs.cloudflare.com/ajax/libs/jquery/3.7.1/jquery.min.js"
+      integrity="sha512-v2CJ7UaYy4JwqLDIrZUI/4hqeoQieOmAZNXBeQyjo21dadnwR+8ZaIJVT8EE2iyI61OV8e6M8PP2/4hpQINQ/g=="
+      crossorigin="anonymous"
+      referrerpolicy="no-referrer"
+    ></script>
+    <script src="https://cdn.datatables.net/1.10.9/js/jquery.dataTables.min.js"></script>
+    <script>
+      $(document).ready(function () {
+        // Initialize the DataTable
+        var table = $('#example').DataTable({
+          processing: true,
+          serverSide: true,
+          ajax: {
+            url: 'http://localhost:8080/api/records.php', // Replace with your API endpoint
+            type: 'GET', 
+            data: function (d) {
+              // Add start_date and end_date to the request
+              d.start_date = $('#start_date').val();
+              d.end_date = $('#end_date').val();
+            },
+          },
+          columns: [
+            { data: 'name' },
+            { data: 'position' },
+            { data: 'office' },
+            { data: 'age' },
+            { data: 'start_date' },
+            { data: 'salary' },
+            { data: 'timestamp' },
+          ],
+          columnDefs: [
+            {
+              targets: 6,
+              type: 'date',
+              
+            },
+          ],
+          order: [[5, 'desc']],
+        });
+    
+        // Add event listeners to the date inputs
+        $('#start_date, #end_date').on('change', function () {
+          table.ajax.reload(); // Reload the table data
+        });
+      });
+    </script>
+  </body>
+</html>
+
+
+
